@@ -7,7 +7,6 @@ package net.thoiry.lapka.correlationidentifier;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -15,6 +14,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,9 +26,8 @@ import org.slf4j.LoggerFactory;
 public class CorrelationService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(CorrelationService.class);
-	private static final int QUEUECAPACITY = 100;
 	private static final int THREADPOOLSIZE = 10;
-	private final BlockingQueue<Message> requestQueue = new ArrayBlockingQueue<>(QUEUECAPACITY);
+	private final BlockingQueue<Message> requestQueue = new LinkedBlockingQueue<>();
 	private final ConcurrentMap<Long, Message> replyMap = new ConcurrentHashMap<>();
 	private final Requestor requestor = new Requestor(requestQueue, replyMap);
 	private final Requestor requestor1 = new Requestor(requestQueue, replyMap);
