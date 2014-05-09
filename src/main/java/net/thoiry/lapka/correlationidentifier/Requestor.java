@@ -6,8 +6,10 @@
 package net.thoiry.lapka.correlationidentifier;
 
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,17 +25,20 @@ public class Requestor implements Runnable {
 	private static final AtomicLong NEXTID = new AtomicLong(1);
 	private final BlockingQueue<Message> requestQueue;
 	private final ReplyChannel<Long, Message> replyChannel;
+	private final CountDownLatch countDownLatch;
 	private volatile boolean stop = false;
 
-	public Requestor(BlockingQueue<Message> outQueue, ReplyChannel<Long, Message> replyChannel) {
+	public Requestor(BlockingQueue<Message> outQueue, ReplyChannel<Long, Message> replyChannel,
+			CountDownLatch countDownLatch) {
 		this.requestQueue = outQueue;
 		this.replyChannel = replyChannel;
+		this.countDownLatch = countDownLatch;
 	}
 
 	@Override
 	public void run() {
-		while (!this.stop) {
-			try {
+		try {
+			while (!this.stop) {
 				Long messageId = NEXTID.getAndIncrement();
 				Message message = new Message(messageId, null, "Message number " + messageId + " from thread "
 						+ Thread.currentThread().getId());
@@ -43,9 +48,14 @@ public class Requestor implements Runnable {
 				}
 				LOGGER.info("Sent request: '{}'.", message);
 				this.getReply(message);
-			} catch (InterruptedException e) {
-				LOGGER.info("Interrupted exception occured", e);
-				throw new RuntimeException(e.getMessage(), e);
+
+			}
+		} catch (InterruptedException e) {
+			LOGGER.info("Interrupted exception occured", e);
+			throw new RuntimeException(e.getMessage(), e);
+		} finally {
+			if (this.countDownLatch != null) {
+				this.countDownLatch.countDown();
 			}
 		}
 	}

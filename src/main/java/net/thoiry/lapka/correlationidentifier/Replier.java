@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
@@ -32,11 +33,14 @@ public class Replier implements Runnable {
 	private volatile boolean stop = false;
 	private final BlockingQueue<Message> requestQueue;
 	private final ReplyChannel<Long, Message> replyChannel;
+	private final CountDownLatch countDownLatch;
 	private final List<Requestor> observers = new CopyOnWriteArrayList<>();
 
-	public Replier(BlockingQueue<Message> requestQueue, ReplyChannel<Long, Message> replyChannel) {
+	public Replier(BlockingQueue<Message> requestQueue, ReplyChannel<Long, Message> replyChannel,
+			CountDownLatch countDownLatch) {
 		this.requestQueue = requestQueue;
 		this.replyChannel = replyChannel;
+		this.countDownLatch = countDownLatch;
 	}
 
 	public void addObserver(Requestor observer) {
@@ -49,25 +53,22 @@ public class Replier implements Runnable {
 
 	@Override
 	public void run() {
-		while (!this.stop) {
-			try {
+		try {
+			while (!this.stop) {
 				Message request = this.requestQueue.poll(TIMEOUTINSECONDS, TimeUnit.SECONDS);
 				if (request != null) {
 					LOGGER.info("Received request {}", request);
 					this.delayMessage(request);
 				}
 				this.sendReplies();
-			} catch (InterruptedException e) {
-				LOGGER.error("Interrupted exception occured.", e);
-				throw new RuntimeException(e.getMessage(), e);
 			}
-		}
-		if (this.stop) {
-			try {
-				this.sendPendingReplies();
-			} catch (InterruptedException e) {
-				LOGGER.error("Interrupted exception occured.", e);
-				throw new RuntimeException(e.getMessage(), e);
+			this.sendPendingReplies();
+		} catch (InterruptedException e) {
+			LOGGER.error("Interrupted exception occured.", e);
+			throw new RuntimeException(e.getMessage(), e);
+		} finally {
+			if (this.countDownLatch != null) {
+				this.countDownLatch.countDown();
 			}
 		}
 	}
@@ -80,7 +81,7 @@ public class Replier implements Runnable {
 	}
 
 	private void sendPendingReplies() throws InterruptedException {
-		LOGGER.info("Trying to send pending replies. Queue size: {}", this.delayedQueue.size());
+		LOGGER.info("Sending pending replies. Pending queue size: {}", this.delayedQueue.size());
 		while (this.delayedQueue.size() > 0) {
 			this.sendReplies();
 		}

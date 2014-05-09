@@ -5,15 +5,10 @@
  */
 package net.thoiry.lapka.correlationidentifier;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import org.slf4j.Logger;
@@ -26,26 +21,23 @@ import org.slf4j.LoggerFactory;
 public class CorrelationService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(CorrelationService.class);
-	private static final int THREADPOOLSIZE = 10;
+	private static final int NUMBEROFTHREADS = 6;
+	private final CountDownLatch countDownLatch = new CountDownLatch(NUMBEROFTHREADS);
 	private final BlockingQueue<Message> requestQueue = new LinkedBlockingQueue<>();
 	private final ReplyChannel<Long, Message> replyChannel = new ReplyChannelImpl<>();
-	private final Replier replier = new Replier(requestQueue, replyChannel);
-	private final Requestor requestor = new Requestor(requestQueue, replyChannel);
-	private final Requestor requestor1 = new Requestor(requestQueue, replyChannel);
-	private final Requestor requestor2 = new Requestor(requestQueue, replyChannel);
-	private final Requestor requestor3 = new Requestor(requestQueue, replyChannel);
-	private final Requestor requestor4 = new Requestor(requestQueue, replyChannel);
-	private final List<Future> futures = new ArrayList<>();
-	private final ExecutorService executorService = Executors.newFixedThreadPool(THREADPOOLSIZE);
+	private final Replier replier = new Replier(requestQueue, replyChannel, countDownLatch);
+	private final Requestor requestor1 = new Requestor(requestQueue, replyChannel, countDownLatch);
+	private final Requestor requestor2 = new Requestor(requestQueue, replyChannel, countDownLatch);
+	private final Requestor requestor3 = new Requestor(requestQueue, replyChannel, countDownLatch);
+	private final Requestor requestor4 = new Requestor(requestQueue, replyChannel, countDownLatch);
+	private final ExecutorService executorService = Executors.newFixedThreadPool(NUMBEROFTHREADS);
 
 	private void start() throws InterruptedException {
-		this.futures.add(this.executorService.submit(requestor));
-		this.futures.add(this.executorService.submit(requestor1));
-		this.futures.add(this.executorService.submit(requestor2));
-		this.futures.add(this.executorService.submit(requestor3));
-		this.futures.add(this.executorService.submit(requestor4));
-		this.futures.add(this.executorService.submit(replier));
-		this.replier.addObserver(requestor);
+		this.executorService.submit(requestor1);
+		this.executorService.submit(requestor2);
+		this.executorService.submit(requestor3);
+		this.executorService.submit(requestor4);
+		this.executorService.submit(replier);
 		this.replier.addObserver(requestor1);
 		this.replier.addObserver(requestor2);
 		this.replier.addObserver(requestor3);
@@ -54,19 +46,13 @@ public class CorrelationService {
 	}
 
 	private void stop() {
-		this.requestor.stop();
 		this.requestor1.stop();
 		this.requestor2.stop();
 		this.requestor3.stop();
 		this.requestor4.stop();
 		this.replier.stop();
 		try {
-			for (Future future : this.futures) {
-				future.get();
-			}
-		} catch (ExecutionException e) {
-			LOGGER.error("Execution exception occured.", e);
-			throw new RuntimeException(e.getMessage(), e);
+			this.countDownLatch.await();
 		} catch (InterruptedException e) {
 			LOGGER.error("Interrupted exception occured.", e);
 			throw new RuntimeException(e.getMessage(), e);
@@ -78,7 +64,7 @@ public class CorrelationService {
 		LOGGER.info("Application started");
 		CorrelationService correlationService = new CorrelationService();
 		correlationService.start();
-		Thread.sleep(10000);
+		Thread.sleep(5000);
 		correlationService.stop();
 		LOGGER.info("Application finished");
 	}
