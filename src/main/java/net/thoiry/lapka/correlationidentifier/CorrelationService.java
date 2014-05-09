@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
 public class CorrelationService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(CorrelationService.class);
-	private static final int NUMBEROFTHREADS = 6;
+	private static final int NUMBEROFTHREADS =  5;
 	private final CountDownLatch countDownLatch = new CountDownLatch(NUMBEROFTHREADS);
 	private final BlockingQueue<Message> requestQueue = new LinkedBlockingQueue<>();
 	private final ReplyChannel<Long, Message> replyChannel = new ReplyChannelImpl<>();
@@ -45,18 +45,13 @@ public class CorrelationService {
 		LOGGER.info("Correlation service started.");
 	}
 
-	private void stop() {
+	private void stop() throws InterruptedException {
 		this.requestor1.stop();
 		this.requestor2.stop();
 		this.requestor3.stop();
 		this.requestor4.stop();
 		this.replier.stop();
-		try {
-			this.countDownLatch.await();
-		} catch (InterruptedException e) {
-			LOGGER.error("Interrupted exception occured.", e);
-			throw new RuntimeException(e.getMessage(), e);
-		}
+		this.countDownLatch.await();
 		this.executorService.shutdown();
 	}
 

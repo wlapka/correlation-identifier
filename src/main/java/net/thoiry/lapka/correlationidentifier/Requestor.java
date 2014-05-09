@@ -52,6 +52,7 @@ public class Requestor implements Runnable {
 			}
 		} catch (InterruptedException e) {
 			LOGGER.info("Interrupted exception occured", e);
+			Thread.currentThread().interrupt();
 			throw new RuntimeException(e.getMessage(), e);
 		} finally {
 			if (this.countDownLatch != null) {

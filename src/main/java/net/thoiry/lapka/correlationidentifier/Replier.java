@@ -65,6 +65,7 @@ public class Replier implements Runnable {
 			this.sendPendingReplies();
 		} catch (InterruptedException e) {
 			LOGGER.error("Interrupted exception occured.", e);
+			Thread.currentThread().interrupt();
 			throw new RuntimeException(e.getMessage(), e);
 		} finally {
 			if (this.countDownLatch != null) {
