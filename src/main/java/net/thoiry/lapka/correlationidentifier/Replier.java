@@ -39,22 +39,18 @@ public class Replier implements Runnable {
 
 	@Override
 	public void run() {
-		try {
-			while (!this.stop) {
-				try {
-					Message request = this.requestQueue.poll(TIMEOUTINSECONDS, TimeUnit.SECONDS);
-					if (request != null) {
-						LOGGER.info("Received request {}", request);
-						this.delayMessage(request);
-					}
-					this.sendReplies();
-				} catch (InterruptedException e) {
-					LOGGER.error("Interrupted exception occured.", e);
-					throw new RuntimeException(e.getMessage(), e);
+		while (!this.stop) {
+			try {
+				Message request = this.requestQueue.poll(TIMEOUTINSECONDS, TimeUnit.SECONDS);
+				if (request != null) {
+					LOGGER.info("Received request {}", request);
+					this.delayMessage(request);
 				}
+				this.sendReplies();
+			} catch (InterruptedException e) {
+				LOGGER.error("Interrupted exception occured.", e);
+				throw new RuntimeException(e.getMessage(), e);
 			}
-		} catch (Exception e) {
-			System.out.println("Exception occured while processing requests");
 		}
 	}
 

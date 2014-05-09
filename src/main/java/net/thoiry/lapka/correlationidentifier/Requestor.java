@@ -59,8 +59,8 @@ public class Requestor implements Runnable {
 	private void processReplies() {
 		for (Iterator<Long> iterator = this.sentRequests.keySet().iterator(); iterator.hasNext();) {
 			Long correlationId = iterator.next();
-			if (this.replyMap.containsKey(correlationId)) {
-				Message reply = this.replyMap.remove(correlationId);
+			Message reply = this.replyMap.remove(correlationId);
+			if (reply != null) {
 				Message request = this.sentRequests.get(reply.getCorrelationId());
 				LOGGER.info("{}: Received reply for request: {}.", Thread.currentThread().getId(), request);
 				iterator.remove();
