@@ -5,10 +5,10 @@
  */
 package net.thoiry.lapka.correlationidentifier;
 
-import java.util.List;
 import java.util.Random;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
@@ -27,28 +27,25 @@ public class Replier implements Runnable {
 	private static final Logger LOGGER = LoggerFactory.getLogger(Replier.class);
 	private static final int TIMEOUTINSECONDS = 1;
 	private static final AtomicLong NEXTID = new AtomicLong();
-	private static final int MAXDELAY = 5;
+	private static final int MAXDELAY = 2;
 	private final DelayQueue<DelayedMessage> delayedQueue = new DelayQueue<>();
 	private final Random random = new Random();
 	private volatile boolean stop = false;
 	private final BlockingQueue<Message> requestQueue;
-	private final ReplyChannel<Long, Message> replyChannel;
 	private final CountDownLatch countDownLatch;
-	private final List<Requestor> observers = new CopyOnWriteArrayList<>();
+	private final ConcurrentMap<Long, Requestor> observersMap = new ConcurrentHashMap<>();
 
-	public Replier(BlockingQueue<Message> requestQueue, ReplyChannel<Long, Message> replyChannel,
-			CountDownLatch countDownLatch) {
+	public Replier(BlockingQueue<Message> requestQueue, CountDownLatch countDownLatch) {
 		this.requestQueue = requestQueue;
-		this.replyChannel = replyChannel;
 		this.countDownLatch = countDownLatch;
 	}
 
-	public void addObserver(Requestor observer) {
-		this.observers.add(observer);
+	public void addObserver(Long correlationId, Requestor observer) {
+		this.observersMap.put(correlationId, observer);
 	}
 
-	public void removeObserver(Requestor observer) {
-		this.observers.remove(observer);
+	public void removeObserver(Long correlationId) {
+		this.observersMap.remove(correlationId);
 	}
 
 	@Override
@@ -100,11 +97,12 @@ public class Replier implements Runnable {
 	private void sendReply(Message request) throws InterruptedException {
 		Long replyId = NEXTID.getAndIncrement();
 		Message reply = new Message(replyId, request.getMessageId(), "Reply for " + request.getBody());
-		this.replyChannel.put(reply.getCorrelationId(), reply);
-		LOGGER.info("Sent reply {}", reply);
-		for (Requestor observer : this.observers) {
-			observer.onReply(reply);
+
+		Requestor observer = this.observersMap.get(reply.getCorrelationId());
+		if (observer != null) {
+			observer.setReply(reply);
 		}
+		LOGGER.info("Sent reply {}", reply);
 	}
 
 	public void stop() {

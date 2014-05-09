@@ -21,15 +21,14 @@ import org.slf4j.LoggerFactory;
 public class CorrelationService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(CorrelationService.class);
-	private static final int NUMBEROFTHREADS =  5;
+	private static final int NUMBEROFTHREADS = 5;
 	private final CountDownLatch countDownLatch = new CountDownLatch(NUMBEROFTHREADS);
 	private final BlockingQueue<Message> requestQueue = new LinkedBlockingQueue<>();
-	private final ReplyChannel<Long, Message> replyChannel = new ReplyChannelImpl<>();
-	private final Replier replier = new Replier(requestQueue, replyChannel, countDownLatch);
-	private final Requestor requestor1 = new Requestor(requestQueue, replyChannel, countDownLatch);
-	private final Requestor requestor2 = new Requestor(requestQueue, replyChannel, countDownLatch);
-	private final Requestor requestor3 = new Requestor(requestQueue, replyChannel, countDownLatch);
-	private final Requestor requestor4 = new Requestor(requestQueue, replyChannel, countDownLatch);
+	private final Replier replier = new Replier(requestQueue, countDownLatch);
+	private final Requestor requestor1 = new Requestor(requestQueue, replier, countDownLatch);
+	private final Requestor requestor2 = new Requestor(requestQueue, replier, countDownLatch);
+	private final Requestor requestor3 = new Requestor(requestQueue, replier, countDownLatch);
+	private final Requestor requestor4 = new Requestor(requestQueue, replier, countDownLatch);
 	private final ExecutorService executorService = Executors.newFixedThreadPool(NUMBEROFTHREADS);
 
 	private void start() throws InterruptedException {
@@ -38,10 +37,6 @@ public class CorrelationService {
 		this.executorService.submit(requestor3);
 		this.executorService.submit(requestor4);
 		this.executorService.submit(replier);
-		this.replier.addObserver(requestor1);
-		this.replier.addObserver(requestor2);
-		this.replier.addObserver(requestor3);
-		this.replier.addObserver(requestor4);
 		LOGGER.info("Correlation service started.");
 	}
 

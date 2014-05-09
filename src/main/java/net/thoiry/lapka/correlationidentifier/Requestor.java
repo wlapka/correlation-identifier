@@ -24,14 +24,14 @@ public class Requestor implements Runnable {
 	// private static final int QUERYFREQUENCYINMILISECONDS = 500;
 	private static final AtomicLong NEXTID = new AtomicLong(1);
 	private final BlockingQueue<Message> requestQueue;
-	private final ReplyChannel<Long, Message> replyChannel;
+	private final Replier replier;
 	private final CountDownLatch countDownLatch;
 	private volatile boolean stop = false;
+	private Message reply = null;
 
-	public Requestor(BlockingQueue<Message> outQueue, ReplyChannel<Long, Message> replyChannel,
-			CountDownLatch countDownLatch) {
+	public Requestor(BlockingQueue<Message> outQueue, Replier replier, CountDownLatch countDownLatch) {
 		this.requestQueue = outQueue;
-		this.replyChannel = replyChannel;
+		this.replier = replier;
 		this.countDownLatch = countDownLatch;
 	}
 
@@ -42,8 +42,10 @@ public class Requestor implements Runnable {
 				Long messageId = NEXTID.getAndIncrement();
 				Message message = new Message(messageId, null, "Message number " + messageId + " from thread "
 						+ Thread.currentThread().getId());
+				this.replier.addObserver(messageId, this);
 				if (!this.requestQueue.offer(message, TIMEOUTINSECONDS, TimeUnit.SECONDS)) {
 					LOGGER.info("Timeout occured while trying to send request since queue full.");
+					this.replier.removeObserver(messageId);
 					continue;
 				}
 				LOGGER.info("Sent request: '{}'.", message);
@@ -62,24 +64,24 @@ public class Requestor implements Runnable {
 	}
 
 	private void getReply(Message request) throws InterruptedException {
-		Message reply = null;
 		synchronized (this) {
-			while (reply == null) {
-				LOGGER.info("Waiting for reply {}, messageId: {}", this, request.getMessageId());
+			while (this.reply == null) {
+				LOGGER.info("Waiting for reply for request: {}", request);
 				this.wait();
-				LOGGER.info("Woken up {} {}", this, request.getMessageId());
-				reply = this.replyChannel.remove(request.getMessageId());
-				if (reply != null) {
-					LOGGER.info("{}: Received reply for request: {}.", Thread.currentThread().getId(), request);
-					return;
-				}
+			}
+			if (this.reply != null) {
+				LOGGER.info("Received reply for request: {}.", request);
+				this.reply = null;
+				return;
 			}
 		}
 	}
 
-	public void onReply(Message reply) {
+	public void setReply(Message reply) {
 		synchronized (this) {
-			LOGGER.info("Received notification about reply '{}', {}", reply);
+			LOGGER.info("Received reply: '{}'", reply);
+			this.reply = reply;
+			this.replier.removeObserver(reply.getCorrelationId());
 			this.notify();
 		}
 	}
