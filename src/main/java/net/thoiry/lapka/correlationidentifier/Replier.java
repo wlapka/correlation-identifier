@@ -5,9 +5,10 @@
  */
 package net.thoiry.lapka.correlationidentifier;
 
+import java.util.List;
 import java.util.Random;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
@@ -25,16 +26,25 @@ public class Replier implements Runnable {
 	private static final Logger LOGGER = LoggerFactory.getLogger(Replier.class);
 	private static final int TIMEOUTINSECONDS = 1;
 	private static final AtomicLong NEXTID = new AtomicLong();
-	private static final int MAXDELAY = 1;
-	private final BlockingQueue<Message> requestQueue;
-	private final ConcurrentMap<Long, Message> replyMap;
+	private static final int MAXDELAY = 5;
 	private final DelayQueue<DelayedMessage> delayedQueue = new DelayQueue<>();
 	private final Random random = new Random();
 	private volatile boolean stop = false;
+	private final BlockingQueue<Message> requestQueue;
+	private final ReplyChannel<Long, Message> replyChannel;
+	private final List<Requestor> observers = new CopyOnWriteArrayList<>();
 
-	public Replier(BlockingQueue<Message> requestQueue, ConcurrentMap<Long, Message> replyMap) {
+	public Replier(BlockingQueue<Message> requestQueue, ReplyChannel<Long, Message> replyChannel) {
 		this.requestQueue = requestQueue;
-		this.replyMap = replyMap;
+		this.replyChannel = replyChannel;
+	}
+
+	public void addObserver(Requestor observer) {
+		this.observers.add(observer);
+	}
+
+	public void removeObserver(Requestor observer) {
+		this.observers.remove(observer);
 	}
 
 	@Override
@@ -52,6 +62,14 @@ public class Replier implements Runnable {
 				throw new RuntimeException(e.getMessage(), e);
 			}
 		}
+		if (this.stop) {
+			try {
+				this.sendPendingReplies();
+			} catch (InterruptedException e) {
+				LOGGER.error("Interrupted exception occured.", e);
+				throw new RuntimeException(e.getMessage(), e);
+			}
+		}
 	}
 
 	private void delayMessage(Message message) {
@@ -59,6 +77,13 @@ public class Replier implements Runnable {
 		DelayedMessage delayedMessage = new DelayedMessage(message, delay);
 		this.delayedQueue.add(delayedMessage);
 		LOGGER.info("Message {} added to delay queue.", message);
+	}
+
+	private void sendPendingReplies() throws InterruptedException {
+		LOGGER.info("Trying to send pending replies. Queue size: {}", this.delayedQueue.size());
+		while (this.delayedQueue.size() > 0) {
+			this.sendReplies();
+		}
 	}
 
 	private void sendReplies() throws InterruptedException {
@@ -73,8 +98,11 @@ public class Replier implements Runnable {
 	private void sendReply(Message request) throws InterruptedException {
 		Long replyId = NEXTID.getAndIncrement();
 		Message reply = new Message(replyId, request.getMessageId(), "Reply for " + request.getBody());
-		this.replyMap.put(reply.getCorrelationId(), reply);
+		this.replyChannel.put(reply.getCorrelationId(), reply);
 		LOGGER.info("Sent reply {}", reply);
+		for (Requestor observer : this.observers) {
+			observer.onReply(reply);
+		}
 	}
 
 	public void stop() {

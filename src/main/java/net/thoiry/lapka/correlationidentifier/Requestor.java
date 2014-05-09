@@ -5,14 +5,9 @@
  */
 package net.thoiry.lapka.correlationidentifier;
 
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,22 +19,21 @@ public class Requestor implements Runnable {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Requestor.class);
 	private static final int TIMEOUTINSECONDS = 1;
+	// private static final int QUERYFREQUENCYINMILISECONDS = 500;
 	private static final AtomicLong NEXTID = new AtomicLong(1);
 	private final BlockingQueue<Message> requestQueue;
-	private final ConcurrentMap<Long, Message> replyMap;
-	private final Map<Long, Message> sentRequests = new HashMap<>();
+	private final ReplyChannel<Long, Message> replyChannel;
 	private volatile boolean stop = false;
 
-	public Requestor(BlockingQueue<Message> outQueue, ConcurrentMap<Long, Message> replyMap) {
+	public Requestor(BlockingQueue<Message> outQueue, ReplyChannel<Long, Message> replyChannel) {
 		this.requestQueue = outQueue;
-		this.replyMap = replyMap;
+		this.replyChannel = replyChannel;
 	}
 
 	@Override
 	public void run() {
 		while (!this.stop) {
 			try {
-				this.processReplies();
 				Long messageId = NEXTID.getAndIncrement();
 				Message message = new Message(messageId, null, "Message number " + messageId + " from thread "
 						+ Thread.currentThread().getId());
@@ -47,8 +41,8 @@ public class Requestor implements Runnable {
 					LOGGER.info("Timeout occured while trying to send request since queue full.");
 					continue;
 				}
-				this.sentRequests.put(messageId, message);
-				LOGGER.info("Request sent: '{}'.", message);
+				LOGGER.info("Sent request: '{}'.", message);
+				this.getReply(message);
 			} catch (InterruptedException e) {
 				LOGGER.info("Interrupted exception occured", e);
 				throw new RuntimeException(e.getMessage(), e);
@@ -56,17 +50,40 @@ public class Requestor implements Runnable {
 		}
 	}
 
-	private void processReplies() {
-		for (Iterator<Long> iterator = this.sentRequests.keySet().iterator(); iterator.hasNext();) {
-			Long correlationId = iterator.next();
-			Message reply = this.replyMap.remove(correlationId);
-			if (reply != null) {
-				Message request = this.sentRequests.get(reply.getCorrelationId());
-				LOGGER.info("{}: Received reply for request: {}.", Thread.currentThread().getId(), request);
-				iterator.remove();
+	private void getReply(Message request) throws InterruptedException {
+		Message reply = null;
+		synchronized (this) {
+			while (reply == null) {
+				LOGGER.info("Waiting for reply {}, messageId: {}", this, request.getMessageId());
+				this.wait();
+				LOGGER.info("Woken up {} {}", this, request.getMessageId());
+				reply = this.replyChannel.remove(request.getMessageId());
+				if (reply != null) {
+					LOGGER.info("{}: Received reply for request: {}.", Thread.currentThread().getId(), request);
+					return;
+				}
 			}
 		}
 	}
+
+	public void onReply(Message reply) {
+		synchronized (this) {
+			LOGGER.info("Received notification about reply '{}', {}", reply);
+			this.notify();
+		}
+	}
+
+	// private void getReply(Message request) throws InterruptedException {
+	// while (true) {
+	// Message reply = this.replyChannel.remove(request.getMessageId());
+	// if (reply != null) {
+	// LOGGER.info("{}: Received reply for request: {}.",
+	// Thread.currentThread().getId(), request);
+	// return;
+	// }
+	// Thread.sleep(QUERYFREQUENCYINMILISECONDS);
+	// }
+	// }
 
 	public void stop() {
 		this.stop = true;

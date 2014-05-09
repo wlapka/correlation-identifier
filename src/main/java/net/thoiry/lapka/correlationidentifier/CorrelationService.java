@@ -28,13 +28,13 @@ public class CorrelationService {
 	private static final Logger LOGGER = LoggerFactory.getLogger(CorrelationService.class);
 	private static final int THREADPOOLSIZE = 10;
 	private final BlockingQueue<Message> requestQueue = new LinkedBlockingQueue<>();
-	private final ConcurrentMap<Long, Message> replyMap = new ConcurrentHashMap<>();
-	private final Requestor requestor = new Requestor(requestQueue, replyMap);
-	private final Requestor requestor1 = new Requestor(requestQueue, replyMap);
-	private final Requestor requestor2 = new Requestor(requestQueue, replyMap);
-	private final Requestor requestor3 = new Requestor(requestQueue, replyMap);
-	private final Requestor requestor4 = new Requestor(requestQueue, replyMap);
-	private final Replier replier = new Replier(requestQueue, replyMap);
+	private final ReplyChannel<Long, Message> replyChannel = new ReplyChannelImpl<>();
+	private final Replier replier = new Replier(requestQueue, replyChannel);
+	private final Requestor requestor = new Requestor(requestQueue, replyChannel);
+	private final Requestor requestor1 = new Requestor(requestQueue, replyChannel);
+	private final Requestor requestor2 = new Requestor(requestQueue, replyChannel);
+	private final Requestor requestor3 = new Requestor(requestQueue, replyChannel);
+	private final Requestor requestor4 = new Requestor(requestQueue, replyChannel);
 	private final List<Future> futures = new ArrayList<>();
 	private final ExecutorService executorService = Executors.newFixedThreadPool(THREADPOOLSIZE);
 
@@ -45,6 +45,11 @@ public class CorrelationService {
 		this.futures.add(this.executorService.submit(requestor3));
 		this.futures.add(this.executorService.submit(requestor4));
 		this.futures.add(this.executorService.submit(replier));
+		this.replier.addObserver(requestor);
+		this.replier.addObserver(requestor1);
+		this.replier.addObserver(requestor2);
+		this.replier.addObserver(requestor3);
+		this.replier.addObserver(requestor4);
 		LOGGER.info("Correlation service started.");
 	}
 
