@@ -6,12 +6,13 @@
 package net.thoiry.lapka.correlationidentifier;
 
 import java.util.Random;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -25,45 +26,43 @@ import org.slf4j.LoggerFactory;
 public class Replier implements Runnable {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Replier.class);
-	private static final int TIMEOUTINSECONDS = 1;
-	private static final AtomicLong NEXTID = new AtomicLong();
+	private static final AtomicLong NEXTID = new AtomicLong(1);
 	private static final int MAXDELAY = 2;
+	private static final int NUMBEROFINTERNALTHREADS = 1;
 	private final DelayQueue<DelayedMessage> delayedQueue = new DelayQueue<>();
 	private final Random random = new Random();
+	private final ConcurrentMap<Long, Requestor> observers = new ConcurrentHashMap<>();
+	private final CountDownLatch internalCountDownLatch = new CountDownLatch(NUMBEROFINTERNALTHREADS);
+	private final ExecutorService executorService = Executors.newFixedThreadPool(NUMBEROFINTERNALTHREADS);
+	private final ReplySender replySender = new ReplySender(internalCountDownLatch, delayedQueue, observers);
 	private volatile boolean stop = false;
-	private final BlockingQueue<Message> requestQueue;
+	private final Pipe<Message> requestQueue;
 	private final CountDownLatch countDownLatch;
-	private final ConcurrentMap<Long, Requestor> observersMap = new ConcurrentHashMap<>();
 
-	public Replier(BlockingQueue<Message> requestQueue, CountDownLatch countDownLatch) {
+	public Replier(Pipe<Message> requestQueue, CountDownLatch countDownLatch) {
 		this.requestQueue = requestQueue;
 		this.countDownLatch = countDownLatch;
+		this.executorService.submit(replySender);
 	}
 
 	public void addObserver(Long correlationId, Requestor observer) {
-		this.observersMap.put(correlationId, observer);
+		this.observers.put(correlationId, observer);
 	}
 
 	public void removeObserver(Long correlationId) {
-		this.observersMap.remove(correlationId);
+		this.observers.remove(correlationId);
 	}
 
 	@Override
 	public void run() {
 		try {
 			while (!this.stop) {
-				Message request = this.requestQueue.poll(TIMEOUTINSECONDS, TimeUnit.SECONDS);
+				Message request = this.requestQueue.receive();
 				if (request != null) {
 					LOGGER.info("Received request {}", request);
 					this.delayMessage(request);
 				}
-				this.sendReplies();
 			}
-			this.sendPendingReplies();
-		} catch (InterruptedException e) {
-			LOGGER.error("Interrupted exception occured.", e);
-			Thread.currentThread().interrupt();
-			throw new RuntimeException(e.getMessage(), e);
 		} finally {
 			if (this.countDownLatch != null) {
 				this.countDownLatch.countDown();
@@ -78,36 +77,84 @@ public class Replier implements Runnable {
 		LOGGER.info("Message {} added to delay queue.", message);
 	}
 
-	private void sendPendingReplies() throws InterruptedException {
-		LOGGER.info("Sending pending replies. Pending queue size: {}", this.delayedQueue.size());
-		while (this.delayedQueue.size() > 0) {
-			this.sendReplies();
-		}
-	}
-
-	private void sendReplies() throws InterruptedException {
-		DelayedMessage delayedRequest = this.delayedQueue.poll();
-		while (delayedRequest != null) {
-			Message request = delayedRequest.getMessage();
-			this.sendReply(request);
-			delayedRequest = this.delayedQueue.poll();
-		}
-	}
-
-	private void sendReply(Message request) throws InterruptedException {
-		Long replyId = NEXTID.getAndIncrement();
-		Message reply = new Message(replyId, request.getMessageId(), "Reply for " + request.getBody());
-
-		Requestor observer = this.observersMap.get(reply.getCorrelationId());
-		if (observer != null) {
-			observer.setReply(reply);
-		}
-		LOGGER.info("Sent reply {}", reply);
-	}
-
 	public void stop() {
-		this.stop = true;
-		LOGGER.info("Received stop signal");
+		try {
+			this.stop = true;
+			this.replySender.stop();
+			this.internalCountDownLatch.await();
+			this.executorService.shutdown();
+			LOGGER.info("Received stop signal");
+		} catch (InterruptedException e) {
+			LOGGER.error("InterruptedException occured", e);
+			Thread.currentThread().interrupt();
+			throw new RuntimeException(e.getMessage(), e);
+		}
+	}
+
+	private static class ReplySender implements Runnable {
+
+		private static final Logger LOGGER = LoggerFactory.getLogger(ReplySender.class);
+		private volatile boolean stop = false;
+		private final CountDownLatch countDownLatch;
+		private final DelayQueue<DelayedMessage> delayedQueue;
+		private final ConcurrentMap<Long, Requestor> observers;
+
+		public ReplySender(CountDownLatch countDownLatch, DelayQueue<DelayedMessage> delayedQueue,
+				ConcurrentMap<Long, Requestor> observers) {
+			this.countDownLatch = countDownLatch;
+			this.delayedQueue = delayedQueue;
+			this.observers = observers;
+		}
+
+		@Override
+		public void run() {
+			try {
+				while (!this.stop) {
+					this.sendReplies();
+				}
+				this.sendPendingReplies();
+			} catch (InterruptedException e) {
+				LOGGER.error("Received interrupted exception.", e);
+				Thread.currentThread().interrupt();
+				throw new RuntimeException(e.getMessage(), e);
+			} finally {
+				if (this.countDownLatch != null) {
+					this.countDownLatch.countDown();
+				}
+			}
+		}
+
+		private void sendPendingReplies() throws InterruptedException {
+			LOGGER.info("Sending pending replies. Pending queue size: {}", this.delayedQueue.size());
+			while (this.delayedQueue.size() > 0) {
+				this.sendReplies();
+			}
+		}
+
+		private void sendReplies() throws InterruptedException {
+			DelayedMessage delayedRequest = this.delayedQueue.poll();
+			while (delayedRequest != null) {
+				Message request = delayedRequest.getMessage();
+				this.sendReply(request);
+				delayedRequest = this.delayedQueue.poll();
+			}
+		}
+
+		private void sendReply(Message request) throws InterruptedException {
+			Long replyId = NEXTID.getAndIncrement();
+			Message reply = new Message(replyId, request.getMessageId(), "Reply for " + request.getBody());
+			Requestor observer = this.observers.get(reply.getCorrelationId());
+			if (observer != null) {
+				observer.receiveReply(reply);
+			}
+			LOGGER.info("Sent reply {}", reply);
+		}
+
+		public void stop() {
+			this.stop = true;
+			LOGGER.info("Received stop signal");
+		}
+
 	}
 
 	private static class DelayedMessage implements Delayed {

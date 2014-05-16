@@ -5,9 +5,7 @@
  */
 package net.thoiry.lapka.correlationidentifier;
 
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
@@ -20,17 +18,15 @@ import org.slf4j.LoggerFactory;
 public class Requestor implements Runnable {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(Requestor.class);
-	private static final int TIMEOUTINSECONDS = 1;
-	// private static final int QUERYFREQUENCYINMILISECONDS = 500;
 	private static final AtomicLong NEXTID = new AtomicLong(1);
-	private final BlockingQueue<Message> requestQueue;
+	private final Pipe<Message> outPipe;
 	private final Replier replier;
 	private final CountDownLatch countDownLatch;
 	private volatile boolean stop = false;
 	private Message reply = null;
 
-	public Requestor(BlockingQueue<Message> outQueue, Replier replier, CountDownLatch countDownLatch) {
-		this.requestQueue = outQueue;
+	public Requestor(Pipe<Message> outPipe, Replier replier, CountDownLatch countDownLatch) {
+		this.outPipe = outPipe;
 		this.replier = replier;
 		this.countDownLatch = countDownLatch;
 	}
@@ -43,14 +39,13 @@ public class Requestor implements Runnable {
 				Message message = new Message(messageId, null, "Message number " + messageId + " from thread "
 						+ Thread.currentThread().getId());
 				this.replier.addObserver(messageId, this);
-				if (!this.requestQueue.offer(message, TIMEOUTINSECONDS, TimeUnit.SECONDS)) {
-					LOGGER.info("Timeout occured while trying to send request since queue full.");
+				if (!this.outPipe.send(message)) {
+					LOGGER.info("Message {} couldn't be sent.", message);
 					this.replier.removeObserver(messageId);
 					continue;
 				}
 				LOGGER.info("Sent request: '{}'.", message);
-				this.getReply(message);
-
+				this.waitForReply(message);
 			}
 		} catch (InterruptedException e) {
 			LOGGER.info("Interrupted exception occured", e);
@@ -63,7 +58,7 @@ public class Requestor implements Runnable {
 		}
 	}
 
-	private void getReply(Message request) throws InterruptedException {
+	private void waitForReply(Message request) throws InterruptedException {
 		synchronized (this) {
 			while (this.reply == null) {
 				LOGGER.info("Waiting for reply for request: {}", request);
@@ -77,7 +72,7 @@ public class Requestor implements Runnable {
 		}
 	}
 
-	public void setReply(Message reply) {
+	public void receiveReply(Message reply) {
 		synchronized (this) {
 			LOGGER.info("Received reply: '{}'", reply);
 			this.reply = reply;
@@ -85,18 +80,6 @@ public class Requestor implements Runnable {
 			this.notify();
 		}
 	}
-
-	// private void getReply(Message request) throws InterruptedException {
-	// while (true) {
-	// Message reply = this.replyChannel.remove(request.getMessageId());
-	// if (reply != null) {
-	// LOGGER.info("{}: Received reply for request: {}.",
-	// Thread.currentThread().getId(), request);
-	// return;
-	// }
-	// Thread.sleep(QUERYFREQUENCYINMILISECONDS);
-	// }
-	// }
 
 	public void stop() {
 		this.stop = true;
