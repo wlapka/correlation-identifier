@@ -3,6 +3,7 @@ correlation-identifier
 This is an implementation of pattern Correlation Identifier [1].
 
 Algorithm:
+
 1. Requestor:
    - send messages synchronously
    
